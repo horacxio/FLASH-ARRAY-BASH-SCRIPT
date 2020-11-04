@@ -1,0 +1,95 @@
+#!/bin/bash
+# Release 1.2
+# Release Date : oct 21,2020
+# Created by: Horacio Diaz ,  horacxio@hotmail.com 
+# with the collaboration of: Antonio Navarro 
+# #################################################################################
+# Este Script copia todos los  VOLs de un PROTECTION GROUP  a elegir y de un SNAP 
+# especifico a elegir también, hacia  nuevos VOLs ó VOLs existentes
+# en caso de VOLs existentes se copian con la opción de overwrite
+# Se ejecuta en un servidor linux con conectividad a la consola de administración
+# del al arreglo Pure Storage. 
+# NOTA : Se requiere utilería  sshpass  en el servidor LINUX. 
+# 
+# Se debe de cambiar flasharray1.testdrive.local. por el nombre o IP correcto
+# #################################################################################
+
+# Asigna variable a el lsitado de PGs , si no hay PGs , informa y sale del programa
+
+pgs_list="$(sshpass -p pureuser ssh pureuser@flasharray1.testdrive.local purepgroup list --raw --csv | cut -d "," -f 1 | tail -n+2)"
+test -z "$pgs_list" && { echo "No hay protection Groups configurados en este arreglo"; exit 0;}
+count_pgs="$(echo "${pgs_list}" | wc -l)" # Calcula el total de PGs
+echo "Se Encontraron $count_pgs Protection Groups"
+
+# Despliega en pantalla el listado de  PGs y les asigna un numero
+COUNT=1
+for pgs in $pgs_list ; do
+echo " $COUNT : ${pgs}"; (( COUNT++ ));
+done
+# Pregunta la eleccion del PG y se asigna a variable
+read -p "Selecciona el Numero de Protection Group que quieres Copiar : " respuesta1
+
+pg_selected="$(echo "${pgs_list}"  | awk '{if(NR == '$respuesta1') print $0}')"
+
+# Asigna variable a el lsitado de snaps , si no hay snaps , informa y sale del programa
+snaps_list="$(sshpass -p pureuser ssh pureuser@flasharray1.testdrive.local purepgroup list --snap --notitle --csv $pg_selected | sed -En "s/ /->/p" )"
+test -z "$snaps_list" && { echo "No hay protection snaps en el PG $pg_selected"; exit 0;}
+count_snaps="$(echo "${snaps_list}" | wc -l)" # Calcula el total de PGs
+echo "Se Encontraron $count_snaps Snaps en $pg_selected"
+
+# Despliega en pantalla el listado de snaps del PG seleccionado
+echo " Name     Source  Create"
+COUNT=1
+for snaps in $snaps_list ; do
+echo " $COUNT : ${snaps}"; (( COUNT++ ));
+done
+
+# Pregunta la eleccion del snap y se asigna a variable
+read -p "Selecciona el snap que quieres Copiar : " respuesta2
+# echo "Opcion seleccionada $respuesta2"
+
+snap_selected="$(echo "${snaps_list}"  | awk '{if(NR == '$respuesta2') print $0}')"
+echo "El snap  Seleccionado es : $snap_selected"
+
+snap_selected_real="$(echo $snap_selected | cut -d "," -f 1)"
+echo " El snap real es $snap_selected_real"
+
+vol_list="$(sshpass -p pureuser ssh pureuser@flasharray1.testdrive.local purepgroup listobj $pg_selected --type vol)"
+test -z "$vol_list" && { echo "No hay Volumenes en el Protection Groups seleccionado"; exit 0;}
+count_vols="$(echo "${vol_list}" | wc -l)" # Calcula el total de PGs
+echo "Se Encontraron $count_vols Volumenes en el PG Seleccionado"
+echo "${vol_list}"
+
+# Pregunta Nombre del Prefijo
+read -p "Escribe el prefijo para los volumenes : " prefijo
+test -z "$prefijo" && { echo "No se especifico prefijo"; exit 0;}
+
+# En caso de volumenes YA existentes muestra listado 
+
+COUNT=1
+echo " Se Encontraron los siguientes VOLs con ese PREFIJO $prefijo : "
+for vols in $vol_list ; do
+sshpass -p pureuser ssh pureuser@flasharray1.testdrive.local purevol list $prefijo${vols} ; ((COUNT++));
+done
+
+# En caso de volumenes YA existentes y conectados  muestra listado 
+
+
+COUNT=1
+echo " Se Encontraron los siguientes VOLs Conectados con el $prefijo : "
+for vols in $vol_list ; do
+sshpass -p pureuser ssh pureuser@flasharray1.testdrive.local purevol list --connect $prefijo${vols} ; ((COUNT++));
+done
+
+# Pregunta si esta seguro de ejecutar la copia con opcion de overwrite
+read -p "Si los VOls de destino ya existen y estan conectados a Host(s) Conectados se recomienda PARAR el IO en los hosts Realcionados antes de ejecutar , Esta Seguro de ejecutar la copia de VOLs? (si,no): " respuesta
+echo " $respuesta "
+test $respuesta = si || exit 0
+
+# Copia cada volumen con la opion de Overwrite
+COUNT=1
+for vols in $vol_list ; do
+sshpass -p pureuser ssh pureuser@flasharray1.testdrive.local purevol copy --overwrite $snap_selected_real.${vols} $prefijo${vols} ;
+echo " Copiando volumen destino, con opcion de overwrite $prefijo${vols}"; (( COUNT++ ));
+done
+
